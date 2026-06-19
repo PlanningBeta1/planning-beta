@@ -212,11 +212,16 @@ function App(){
   const [hovD,setHovD]=React.useState(null);
   const [newN,setNewN]=React.useState("");
   const [newH,setNewH]=React.useState(35);
-  const [newDeb,setNewDeb]=React.useState("09h00");
-  const [newFin,setNewFin]=React.useState("18h00");
-  const [newJours,setNewJours]=React.useState(["Lundi","Mardi","Mercredi","Jeudi","Vendredi"]);
   const [genModal,setGenModal]=React.useState(null);
   const [genResult,setGenResult]=React.useState(null);
+  const [genEmp,setGenEmp]=React.useState("");
+  const [genHSem,setGenHSem]=React.useState(35);
+  const [genDeb,setGenDeb]=React.useState("09h00");
+  const [genFin,setGenFin]=React.useState("18h00");
+  const [genPause,setGenPause]=React.useState(60);
+  const [genOffFixe,setGenOffFixe]=React.useState(false);
+  const [genOffJour,setGenOffJour]=React.useState("Lundi");
+  const [genPropositions,setGenPropositions]=React.useState([]);
   const [feedback,setFeedback]=React.useState("");
   const [fbSent,setFbSent]=React.useState(false);
 
@@ -319,8 +324,65 @@ function App(){
 
   const addE=()=>{
     if(!newN.trim())return;
-    const emp={id:"e"+Date.now(),name:newN.trim(),hSem:Number(newH)||35,horDeb:newDeb,horFin:newFin,jours:newJours};
-    const l=[...emps,emp];setEmps(l);svE(l);setNewN("");setNewH(35);setNewDeb("09h00");setNewFin("18h00");setNewJours(["Lundi","Mardi","Mercredi","Jeudi","Vendredi"]);
+    const l=[...emps,{id:"e"+Date.now(),name:newN.trim(),hSem:Number(newH)||35}];
+    setEmps(l);svE(l);setNewN("");setNewH(35);
+  };
+
+  const JOURS_SEM=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+
+  const toMin=t=>{const p=(t||"09h00").replace(/[hH]/,":").split(":");return parseInt(p[0])*60+(parseInt(p[1])||0);};
+
+  const genererPropositions=()=>{
+    const debMin=toMin(genDeb);
+    const finMin=toMin(genFin);
+    const ampJour=finMin-debMin; // amplitude brute en minutes
+    const travailleMin=ampJour-Number(genPause); // travail net en minutes
+    const travailleH=Math.round(travailleMin/60*10)/10;
+    const hContrat=Number(genHSem)||35;
+
+    // Calcul du nb de jours nécessaires
+    const nbJoursNeeded=Math.round(hContrat/travailleH);
+
+    // Construction des jours possibles
+    const tousJours=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+    const joursDispos=genOffFixe?tousJours.filter(j=>j!==genOffJour):tousJours.filter(j=>j!=="Dimanche");
+
+    // Génère 3 propositions avec jours off différents
+    const props=[];
+    const joursOffPossibles=genOffFixe?[genOffJour]:["Lundi","Mardi","Mercredi","Jeudi","Samedi"];
+
+    joursOffPossibles.slice(0,3).forEach(jourOff=>{
+      const joursRetenus=joursDispos.filter(j=>j!==jourOff).slice(0,nbJoursNeeded);
+      const hTot=Math.round(joursRetenus.length*travailleH*10)/10;
+      props.push({
+        jours:joursRetenus,
+        jourOff,
+        hTot,
+        deb:genDeb,
+        fin:genFin,
+        pause:Number(genPause),
+        ecart:Math.round((hTot-hContrat)*10)/10
+      });
+    });
+
+    setGenPropositions(props);
+  };
+
+  const appliquerProposition=async(emp,prop)=>{
+    const wDays=getWD(mon);
+    const nc={...cells,[emp.id]:{...(cells[emp.id]||{})}};
+    let count=0;
+    wDays.forEach(d=>{
+      const nomJour=JOURS_SEM[d.getDay()===0?6:d.getDay()-1];
+      const k=dk(d);
+      if(prop.jours.includes(nomJour)){
+        nc[emp.id][k]={val:prop.deb+"/"+prop.fin,hsupp:0};
+        count++;
+      }
+    });
+    setCells(nc);await svC(nc);
+    setGenResult({nom:emp.name,count,deb:prop.deb,fin:prop.fin});
+    setGenModal(null);setGenPropositions([]);
   };
 
   const expR=()=>{
@@ -597,30 +659,133 @@ function App(){
     );
   };
 
-  const JOURS_SEM=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
-
-  const genererPlanning=async(emp)=>{
-    const joursActifs=emp.jours||["Lundi","Mardi","Mercredi","Jeudi","Vendredi"];
-    const deb=emp.horDeb||"09h00";
-    const fin=emp.horFin||"18h00";
-    const lieu=emp.lieuDefaut||"";
-    const wDays=getWD(mon);
-    const nc={...cells,[emp.id]:{...(cells[emp.id]||{})}};
-    let count=0;
-    wDays.forEach(d=>{
-      const nomJour=JOURS_SEM[d.getDay()===0?6:d.getDay()-1];
-      const k=dk(d);
-      if(joursActifs.includes(nomJour)){
-        const val=lieu?(lieu+" "+deb+"/"+fin):(deb+"/"+fin);
-        nc[emp.id][k]={val,hsupp:0};count++;
-      }
-    });
-    setCells(nc);await svC(nc);
-    setGenResult({nom:emp.name,count,deb,fin});
-    setGenModal(null);
+  const renderGenModal=()=>{
+    if(!genModal)return null;
+    const emp=genModal;
+    const ei=emps.findIndex(e=>e.id===emp.id);
+    const debMin=toMin(genDeb),finMin=toMin(genFin);
+    const ampJour=finMin-debMin;
+    const travailleH=Math.round((ampJour-Number(genPause))/60*10)/10;
+    const nbJours=travailleH>0?Math.round(Number(genHSem)/travailleH):5;
+    return React.createElement("div",{onClick:e=>e.target===e.currentTarget&&(setGenModal(null),setGenPropositions([])),style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,backdropFilter:"blur(3px)",padding:16}},
+      React.createElement("div",{style:{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:480,boxShadow:"0 20px 60px rgba(0,0,0,0.2)",maxHeight:"90vh",overflowY:"auto"}},
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:20}},
+          React.createElement("div",{style:{width:40,height:40,background:"linear-gradient(135deg,#1a6ed8,#8b1ad6)",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}},"⚡"),
+          React.createElement("div",null,
+            React.createElement("div",{style:{fontSize:16,fontWeight:800,color:"#1a1a2e"}},"Générer le planning"),
+            React.createElement("div",{style:{fontSize:12,color:ea(ei),fontWeight:700}},"● "+emp.name)
+          )
+        ),
+        genPropositions.length===0?React.createElement("div",null,
+          React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}},
+            React.createElement("div",null,
+              React.createElement("label",{style:lb},"Contrat heures/sem"),
+              React.createElement("select",{value:genHSem,onChange:e=>setGenHSem(e.target.value),style:ip},
+                Array.from({length:26},(_,i)=>i+15).concat([38.5]).map(h=>React.createElement("option",{key:h,value:h},h+"h"))
+              )
+            ),
+            React.createElement("div",null,
+              React.createElement("label",{style:lb},"Pause journalière"),
+              React.createElement("select",{value:genPause,onChange:e=>setGenPause(e.target.value),style:ip},
+                React.createElement("option",{value:0},"Aucune"),
+                React.createElement("option",{value:30},"30 min"),
+                React.createElement("option",{value:60},"1h00"),
+                React.createElement("option",{value:90},"1h30")
+              )
+            )
+          ),
+          React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}},
+            React.createElement("div",null,
+              React.createElement("label",{style:lb},"Amplitude début"),
+              React.createElement("select",{value:genDeb,onChange:e=>setGenDeb(e.target.value),style:ip},
+                SLOTS.map(t=>React.createElement("option",{key:t,value:t},t))
+              )
+            ),
+            React.createElement("div",null,
+              React.createElement("label",{style:lb},"Amplitude fin"),
+              React.createElement("select",{value:genFin,onChange:e=>setGenFin(e.target.value),style:ip},
+                SLOTS.filter(t=>t>genDeb).map(t=>React.createElement("option",{key:t,value:t},t))
+              )
+            )
+          ),
+          travailleH>0&&React.createElement("div",{style:{background:"#eff6ff",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #bfdbfe",fontSize:12,color:"#1a6ed8"}},
+            "⏱ "+travailleH+"h/jour net · "+nbJours+" jours nécessaires pour "+genHSem+"h"
+          ),
+          React.createElement("div",{style:{background:"#f8f9fa",borderRadius:10,padding:14,marginBottom:14}},
+            React.createElement("label",{style:{...lb,marginBottom:10}},"Jour de repos"),
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+              React.createElement("button",{onClick:()=>setGenOffFixe(false),style:{padding:"6px 14px",borderRadius:20,border:"1.5px solid "+(!genOffFixe?"#1a6ed8":"#e5e7eb"),background:!genOffFixe?"#1a6ed8":"#fff",color:!genOffFixe?"#fff":"#555",fontWeight:600,fontSize:12,cursor:"pointer"}},"Variable"),
+              React.createElement("button",{onClick:()=>setGenOffFixe(true),style:{padding:"6px 14px",borderRadius:20,border:"1.5px solid "+(genOffFixe?"#1a6ed8":"#e5e7eb"),background:genOffFixe?"#1a6ed8":"#fff",color:genOffFixe?"#fff":"#555",fontWeight:600,fontSize:12,cursor:"pointer"}},"Fixe")
+            ),
+            genOffFixe&&React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
+              JOURS_SEM.filter(j=>j!=="Dimanche").map(j=>React.createElement("button",{key:j,onClick:()=>setGenOffJour(j),style:{padding:"5px 10px",borderRadius:20,border:"1.5px solid "+(genOffJour===j?"#dc2626":"#e5e7eb"),background:genOffJour===j?"#dc2626":"#fff",color:genOffJour===j?"#fff":"#555",fontWeight:600,fontSize:12,cursor:"pointer"}},j.slice(0,3)))
+            ),
+            !genOffFixe&&React.createElement("div",{style:{fontSize:11,color:"#888"}}, "L'IA proposera 3 options avec des jours off différents")
+          ),
+          React.createElement("div",{style:{background:"#fffbeb",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #fde68a",fontSize:12,color:"#92400e"}},"📅 Semaine du "+frD(mon)+" au "+frD(addD(mon,5))),
+          React.createElement("div",{style:{display:"flex",gap:8}},
+            React.createElement("button",{onClick:genererPropositions,disabled:travailleH<=0,style:{flex:1,padding:"12px 0",borderRadius:9,border:"none",background:travailleH>0?"linear-gradient(135deg,#1a6ed8,#8b1ad6)":"#e5e7eb",color:travailleH>0?"#fff":"#aaa",fontWeight:800,fontSize:14,cursor:travailleH>0?"pointer":"default"}},"⚡ Générer les propositions"),
+            React.createElement("button",{onClick:()=>{setGenModal(null);setGenPropositions([]);},style:{padding:"12px 14px",borderRadius:9,border:"1px solid #e5e7eb",background:"#f8f9fa",color:"#888",fontWeight:600,fontSize:13,cursor:"pointer"}},"Annuler")
+          )
+        ):React.createElement("div",null,
+          React.createElement("div",{style:{fontSize:14,fontWeight:800,color:"#1a1a2e",marginBottom:14}},"Choisissez une proposition :"),
+          genPropositions.map((prop,pi)=>React.createElement("div",{key:pi,style:{background:"#f8f9fa",borderRadius:12,padding:16,marginBottom:10,border:"2px solid #e5e7eb",cursor:"pointer"},onClick:()=>appliquerProposition(emp,prop)},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}},
+              React.createElement("div",{style:{fontWeight:800,fontSize:14,color:"#1a1a2e"}},"Proposition "+(pi+1)),
+              React.createElement("div",{style:{background:prop.ecart===0?"#d1fae5":Math.abs(prop.ecart)<0.5?"#fef3c7":"#fee2e2",color:prop.ecart===0?"#059669":Math.abs(prop.ecart)<0.5?"#d97706":"#dc2626",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}},prop.hTot+"h/sem "+(prop.ecart===0?"✅":prop.ecart>0?"+"+prop.ecart+"h":prop.ecart+"h"))
+            ),
+            React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:5,marginBottom:6}},
+              JOURS_SEM.map(j=>React.createElement("span",{key:j,style:{padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:600,background:prop.jours.includes(j)?"#1a6ed8":"#e5e7eb",color:prop.jours.includes(j)?"#fff":"#aaa"}},j.slice(0,3)))
+            ),
+            React.createElement("div",{style:{fontSize:12,color:"#555"}},prop.deb+" → "+prop.fin+" · pause "+prop.pause+"min · repos : "+prop.jourOff),
+            React.createElement("div",{style:{marginTop:10,textAlign:"center",background:"#1a6ed8",color:"#fff",borderRadius:8,padding:"8px",fontSize:13,fontWeight:700}},"✓ Appliquer cette semaine")
+          )),
+          React.createElement("button",{onClick:()=>setGenPropositions([]),style:{width:"100%",padding:"10px 0",borderRadius:9,border:"1px solid #e5e7eb",background:"#f8f9fa",color:"#888",fontWeight:600,fontSize:13,cursor:"pointer",marginTop:4}},"← Modifier les paramètres")
+        )
+      )
+    );
   };
 
-  const renderGenModal=()=>{
+  const renderEquipe=()=>React.createElement("div",{style:{maxWidth:520}},
+    React.createElement("h2",{style:{fontSize:20,fontWeight:800,color:"#1a1a2e",marginBottom:6}},"👥 Mon équipe"),
+    React.createElement("div",{style:{fontSize:12,color:"#aaa",marginBottom:18}},"Gérez vos collaborateurs et générez leurs plannings en un clic"),
+    genResult&&React.createElement("div",{style:{background:"#d1fae5",border:"2px solid #6ee7b7",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}},
+      React.createElement("div",{style:{fontSize:24}},"✅"),
+      React.createElement("div",{style:{flex:1}},
+        React.createElement("div",{style:{fontSize:13,fontWeight:800,color:"#065f46"}},"Planning généré pour "+genResult.nom+" !"),
+        React.createElement("div",{style:{fontSize:12,color:"#047857"}},genResult.count+" jours · "+genResult.deb+" → "+genResult.fin)
+      ),
+      React.createElement("button",{onClick:()=>setGenResult(null),style:{fontSize:18,color:"#065f46",background:"none",border:"none",cursor:"pointer"}},"×")
+    ),
+    emps.length===0&&React.createElement("div",{style:{background:"#eff6ff",border:"1px solid #cce5ff",borderRadius:10,padding:16,marginBottom:16,fontSize:13,color:"#1a6ed8"}},"👋 Bienvenue ! Commencez par ajouter vos collaborateurs ci-dessous."),
+    emps.map((emp,ei)=>React.createElement("div",{key:emp.id,style:{background:"#fff",borderRadius:12,marginBottom:10,border:"1px solid #e5e7eb",borderLeft:"4px solid "+ea(ei)}},
+      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}},
+        React.createElement("span",{style:{color:ea(ei),fontSize:16}},"●"),
+        React.createElement("div",{style:{flex:1}},
+          React.createElement("div",{style:{fontWeight:700,fontSize:14,color:"#1a1a2e"}},emp.name),
+          React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},(emp.hSem||35)+"h/semaine")
+        ),
+        React.createElement("button",{onClick:()=>{setGenModal(emp);setGenHSem(emp.hSem||35);setGenPropositions([]);},style:{padding:"6px 14px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#1a6ed8,#8b1ad6)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}},"⚡ Générer"),
+        React.createElement("button",{onClick:()=>{const l=emps.filter(e=>e.id!==emp.id);setEmps(l);svE(l);},style:{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:18,padding:"0 4px",marginLeft:4}},"×")
+      )
+    )),
+    React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:18,marginTop:emps.length>0?18:0,border:"1px solid #e5e7eb"}},
+      React.createElement("div",{style:{fontSize:13,fontWeight:800,marginBottom:14,color:"#1a1a2e"}},"+ Ajouter un collaborateur"),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:12}},
+        React.createElement("div",null,
+          React.createElement("label",{style:lb},"Prénom / Nom"),
+          React.createElement("input",{value:newN,onChange:e=>setNewN(e.target.value),onKeyDown:e=>e.key==="Enter"&&addE(),placeholder:"Ex: Marie Dupont",style:ip})
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{style:lb},"H/sem"),
+          React.createElement("select",{value:newH,onChange:e=>setNewH(e.target.value),style:{...ip,width:90}},
+            Array.from({length:26},(_,i)=>i+15).concat([38.5]).map(h=>React.createElement("option",{key:h,value:h},h+"h"))
+          )
+        )
+      ),
+      React.createElement("button",{onClick:addE,disabled:!newN.trim(),style:{width:"100%",padding:"10px 0",borderRadius:8,border:"none",background:newN.trim()?"#1a6ed8":"#e5e7eb",color:newN.trim()?"#fff":"#aaa",fontWeight:700,fontSize:14,cursor:newN.trim()?"pointer":"default"}},"+ Ajouter")
+    )
+  );
     if(!genModal)return null;
     const emp=genModal;
     const ei=emps.findIndex(e=>e.id===emp.id);
@@ -690,71 +855,6 @@ function App(){
       )
     );
   };
-
-  const renderEquipe=()=>React.createElement("div",{style:{maxWidth:560}},
-    React.createElement("h2",{style:{fontSize:20,fontWeight:800,color:"#1a1a2e",marginBottom:6}},"👥 Mon équipe"),
-    React.createElement("div",{style:{fontSize:12,color:"#aaa",marginBottom:18}},"Configurez votre équipe et générez les plannings automatiquement ⚡"),
-    genResult&&React.createElement("div",{style:{background:"#d1fae5",border:"2px solid #6ee7b7",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}},
-      React.createElement("div",{style:{fontSize:24}},"✅"),
-      React.createElement("div",{style:{flex:1}},
-        React.createElement("div",{style:{fontSize:13,fontWeight:800,color:"#065f46"}},"Planning généré pour "+genResult.nom+" !"),
-        React.createElement("div",{style:{fontSize:12,color:"#047857"}},genResult.count+" jours remplis · "+genResult.deb+" → "+genResult.fin)
-      ),
-      React.createElement("button",{onClick:()=>setGenResult(null),style:{fontSize:18,color:"#065f46",background:"none",border:"none",cursor:"pointer"}},"×")
-    ),
-    emps.length===0&&React.createElement("div",{style:{background:"#eff6ff",border:"1px solid #cce5ff",borderRadius:10,padding:16,marginBottom:16,fontSize:13,color:"#1a6ed8"}},"👋 Bienvenue ! Commencez par ajouter vos collaborateurs ci-dessous."),
-    emps.map((emp,ei)=>React.createElement("div",{key:emp.id,style:{background:"#fff",borderRadius:12,marginBottom:10,border:"1px solid #e5e7eb",borderLeft:"4px solid "+ea(ei),overflow:"hidden"}},
-      React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}},
-        React.createElement("span",{style:{color:ea(ei),fontSize:16}},"●"),
-        React.createElement("div",{style:{flex:1}},
-          React.createElement("div",{style:{fontWeight:700,fontSize:14,color:"#1a1a2e"}},emp.name),
-          React.createElement("div",{style:{fontSize:11,color:"#aaa",marginTop:2}},
-            (emp.hSem||35)+"h/sem",
-            emp.horDeb&&emp.horFin?" · "+emp.horDeb+" → "+emp.horFin:"",
-            emp.jours&&emp.jours.length>0?" · "+emp.jours.map(j=>j.slice(0,3)).join(", "):""
-          )
-        ),
-        React.createElement("button",{onClick:()=>setGenModal(emp),style:{padding:"6px 14px",borderRadius:8,border:"none",background:"linear-gradient(135deg,#1a6ed8,#8b1ad6)",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}},"⚡ Générer"),
-        React.createElement("button",{onClick:()=>{const l=emps.filter(e=>e.id!==emp.id);setEmps(l);svE(l);},style:{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:18,padding:"0 4px",marginLeft:4}},"×")
-      )
-    )),
-    React.createElement("div",{style:{background:"#fff",borderRadius:12,padding:18,marginTop:emps.length>0?18:0,border:"1px solid #e5e7eb"}},
-      React.createElement("div",{style:{fontSize:13,fontWeight:800,marginBottom:16,color:"#1a1a2e"}},"+ Ajouter un collaborateur"),
-      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:12}},
-        React.createElement("div",null,
-          React.createElement("label",{style:lb},"Prénom / Nom"),
-          React.createElement("input",{value:newN,onChange:e=>setNewN(e.target.value),onKeyDown:e=>e.key==="Enter"&&addE(),placeholder:"Ex: Marie Dupont",style:ip})
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{style:lb},"H/sem"),
-          React.createElement("select",{value:newH,onChange:e=>setNewH(e.target.value),style:{...ip,width:90}},
-            Array.from({length:26},(_,i)=>i+15).concat([38.5]).map(h=>React.createElement("option",{key:h,value:h},h+"h"))
-          )
-        )
-      ),
-      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}},
-        React.createElement("div",null,
-          React.createElement("label",{style:lb},"Heure début"),
-          React.createElement("select",{value:newDeb,onChange:e=>setNewDeb(e.target.value),style:ip},
-            SLOTS.map(t=>React.createElement("option",{key:t,value:t},t))
-          )
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{style:lb},"Heure fin"),
-          React.createElement("select",{value:newFin,onChange:e=>setNewFin(e.target.value),style:ip},
-            SLOTS.filter(t=>t>newDeb).map(t=>React.createElement("option",{key:t,value:t},t))
-          )
-        )
-      ),
-      React.createElement("div",{style:{marginBottom:14}},
-        React.createElement("label",{style:{...lb,marginBottom:8}},"Jours travaillés"),
-        React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
-          JOURS_SEM.map(j=>React.createElement("button",{key:j,onClick:()=>setNewJours(p=>p.includes(j)?p.filter(x=>x!==j):[...p,j]),style:{padding:"5px 10px",borderRadius:20,border:"1.5px solid "+(newJours.includes(j)?"#1a6ed8":"#e5e7eb"),background:newJours.includes(j)?"#1a6ed8":"#fff",color:newJours.includes(j)?"#fff":"#555",fontWeight:600,fontSize:12,cursor:"pointer"}},j.slice(0,3)))
-        )
-      ),
-      React.createElement("button",{onClick:addE,disabled:!newN.trim(),style:{width:"100%",padding:"10px 0",borderRadius:8,border:"none",background:newN.trim()?"#1a6ed8":"#e5e7eb",color:newN.trim()?"#fff":"#aaa",fontWeight:700,fontSize:14,cursor:newN.trim()?"pointer":"default"}},"+ Ajouter")
-    )
-  );
 
   const renderFeedback=()=>React.createElement("div",{style:{maxWidth:560}},
     React.createElement("h2",{style:{fontSize:20,fontWeight:800,color:"#1a1a2e",marginBottom:6}},"💬 Votre avis"),
