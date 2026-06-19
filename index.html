@@ -799,10 +799,9 @@ function App(){
       const idx=emps.findIndex(e=>e.id===emp.id);
       const ne=[...emps];ne[idx]={...emp,[key]:val};setEmps(ne);svE(ne);setGenModal(ne[idx]);
     };
-    const toMin=t=>{const p=t.replace(/[hH]/,":").split(":");return parseInt(p[0])*60+(parseInt(p[1])||0);};
-    const dRaw=emp.horDeb&&emp.horFin?toMin(emp.horFin)-toMin(emp.horDeb):0;
-    const pause=dRaw>360?60:0;
-    const hParJour=dRaw>0?Math.round((dRaw-pause)/60*10)/10:0;
+    const debMin=toMin(genDeb),finMin=toMin(genFin);
+    const ampJour2=finMin-debMin;
+    const hParJour=ampJour2>0?Math.round((ampJour2-Number(genPause))/60*10)/10:0;
     const nbJours=joursEmp.length;
     const hTotSem=Math.round(hParJour*nbJours*10)/10;
     return React.createElement("div",{onClick:e=>e.target===e.currentTarget&&setGenModal(null),style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,backdropFilter:"blur(3px)",padding:16}},
@@ -886,8 +885,8 @@ function App(){
   const renderModal=()=>{
     if(!modal)return null;
     const emp=emps.find(e=>e.id===modal.empId),ei=emps.findIndex(e=>e.id===modal.empId);
-    const toMin=t=>{const parts=t.replace(/[hH]/,":").split(":");return parseInt(parts[0])*60+(parseInt(parts[1])||0);};
-    const dRaw=mDeb&&mFin?toMin(mFin)-toMin(mDeb):0;
+    const toMinLocal=t=>{const parts=t.replace(/[hH]/,":").split(":");return parseInt(parts[0])*60+(parseInt(parts[1])||0);};
+    const dRaw=mDeb&&mFin?toMinLocal(mFin)-toMinLocal(mDeb):0;
     const pause=dRaw>360?60:0;
     const duree=mDeb&&mFin&&dRaw>0?Math.round((dRaw-pause)/60*10)/10:null;
     const slS={flex:1,border:"1.5px solid #e5e7eb",borderRadius:9,padding:"8px 7px",fontSize:13,color:"#1a1a2e",background:"#f8f9fa"};
